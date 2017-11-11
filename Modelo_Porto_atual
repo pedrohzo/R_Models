@@ -1,0 +1,90 @@
+#install.packages(c("e1071", "caret", "doSNOW", "ipred", "xgboost"))
+library(caret)
+library(readr)
+library(doParallel)
+train <- read_csv("~/Modelos/Porto/train.csv")
+#=================================================================
+# Split Data
+#=================================================================
+
+# Use caret to create a 70/30% split of the training data,
+# keeping the proportions of the Survived class label the
+# same across splits.
+set.seed(54321)
+
+
+train$id<-NULL
+train[] <- lapply(train, as.integer)
+train$target<-as.factor(train$target)
+porto.train[is.na(porto.train)] <- 0
+
+
+
+indexes <- createDataPartition(train$target,
+                                                              p = 1,
+                               list = FALSE)
+porto.train <- train[indexes,]
+porto.teste<- train[-indexes,]
+porto.train$target<-as.factor(porto.train$target)
+
+porto.teste$target<-as.factor(porto.teste$target)
+
+
+porto.train_2 <- porto.train[porto.train$target == "1",]
+porto.train_1 <- porto.train[porto.train$target == "0",]
+
+id <- createDataPartition(porto.train_1$target,
+                               p = (((nrow(porto.train_2)))/nrow(porto.train_1)),
+                               list = FALSE)
+porto.train_1<-porto.train_1[id,]
+
+  porto.train_vf<-rbind(porto.train_2,porto.train_1)
+  
+  porto.train_vf_2 <- porto.train_vf[sample(nrow(porto.train_vf)),]  
+
+  porto.train_vf_2[is.na(porto.train_vf_2)] <- 0
+# Examine the proportions of the Survived class lable across
+# the datasets.
+prop.table(table(train$target))
+prop.table(table(porto.train$target))
+prop.table(table(porto.train_vf_2$target))
+
+
+
+control <- trainControl(method = "repeatedcv",
+                              number = 5,
+                              repeats = 3)
+Cluster<-detectCores()-1
+cl <- makeCluster(Cluster)
+registerDoParallel(cl)
+
+
+mtry <- sqrt(ncol(porto.train_vf_2))
+tunegrid <- expand.grid(.mtry=mtry)
+
+set.seed(7)
+modelrf <- train(target~., data=porto.train_vf_2, method="rf", trControl=control,allowParallel=TRUE,tuneGrid=tunegrid,metric = "Accuracy")
+confusionMatrix(modelrf)
+
+xg <- train(target~., data=porto.train_vf_2, method="xgbLinear", trControl=control,allowParallel=TRUE,metric = "Accuracy")
+confusionMatrix(xg)
+xg_2 <- train(target~., data=porto.train_vf_2, method="xgbTree", trControl=control,allowParallel=TRUE,metric = "Accuracy")
+confusionMatrix(xg_2)
+# collect resamples
+results <- resamples(list(LVQ=modelLvq, GBM=modelGbm, SVM=modelSvm,RF=modelrf))
+# summarize the distributions
+summary(results)
+# boxplots of results
+bwplot(results)
+# dot plots of results
+dotplot(results)
+
+
+teste_final <- read_csv("~/Modelos/Porto/test.csv")
+teste_final_vf<-teste_final
+teste_final_vf$id<-NULL
+
+pred<-predict(xg_2, newdata = teste_final_vf, type = "prob")
+predition_vf<-cbind(teste_final$id,pred)
+write.csv(predition_vf,file="C:/Users/Pedro/Documents/Modelos/Porto/prediction_final_11_10_XGBOST_V2.csv")
+stopCluster(cl)
