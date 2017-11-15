@@ -1,0 +1,94 @@
+library(xgboost)
+library(data.table)
+library(purrr)
+
+
+train_data  <- fread('../input/train.csv', stringsAsFactors = T)
+train_data$type <- 1
+
+test_data  <- fread('../input/test.csv', stringsAsFactors = T)
+test_data$type <- 0
+
+
+train_df_model <- train_data
+y_train <- train_df_model$target
+
+train_df_model$target <- NULL
+
+
+# Row binding train & test set for feature engineering
+train_test <- rbindlist(l = list(train_df_model, test_data),use.names = T)
+#ntrain <- nrow(train_df_model)
+features <- names(train_data)
+
+
+#convert character into integer
+for (f in features) {
+  if (is.character(train_test[[f]])) {
+    levels = sort(unique(train_test[[f]]))
+    train_test[[f]] = as.integer(factor(train_test[[f]],levels = levels))
+  }
+}
+
+
+#splitting whole data back again
+train_x <- train_test[type==1,]
+test_x <- train_test[type==0,]
+
+train_x$type <- NULL
+test_x$type <- NULL
+
+
+#convert into numeric for XGBoost implementation
+train_x[] <- map(train_x, as.numeric)
+test_x[] <- map(test_x, as.numeric)
+
+
+dtrain <- xgb.DMatrix(as.matrix(train_x),label = y_train)
+dtest <- xgb.DMatrix(as.matrix(test_x))
+
+
+set.seed(6542)
+
+rm(test_x,train_df_model,train_test)
+##xgboost parameters
+xgb_params <- list(booster = "gbtree" 
+                   , objectve = "binary:logistic"
+                   , eta=0.1                       #(0.02)
+                   , gamma=1                        #(1)
+                   , max_depth=10                    #(6)
+                   , subsample=0.90                 #(0.95)
+                   , colsample_bytree = 0.8         #(0.8)
+                   , min_child_weight = 5           #(5)
+                   , base_score=median(y_train)
+)
+
+#tuning
+#xgbcv <- xgb.cv(params = xgb_params
+#                , data = dtrain
+#                , nrounds = 1000
+#                , nfold = 4
+#               , print_every_n = 20
+#               , early_stopping_rounds = 20
+#               , maximize = F
+#                , prediction = F
+#                , showsd = T
+#)
+
+#train model
+gb_dt <- xgb.train(params = xgb_params
+                   , data = dtrain
+                   , nrounds = 1400
+                   , print_every_n = 20
+                   , early_stopping_rounds = 10
+                   , maximize = F
+                   , verbose = 1
+                   , watchlist = list(train=dtrain)
+)
+
+test_preds <- predict(gb_dt, dtest, type = "prob")
+
+sub <- data.frame(id = test_data$id, target = test_preds)
+sub$target <- abs(sub$target)
+
+write.csv(sub, 'C:/Users/logonrm/Downloads/new_submission.csv', row.names = FALSE)
